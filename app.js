@@ -265,6 +265,18 @@ function renderUser(){
    COMPETITION
    ===================================================================== */
 function fmtLeft(ms){ const tm = Math.ceil(ms / 6e4), h = Math.floor(tm / 60), m = tm % 60; return h ? t('dur_h', { h, m }) : t('dur_m', { m }); }
+const pad2 = n => String(n).padStart(2, '0');
+function fmtHMS(ms){ // live countdown text: "2 d 05:03:09", "7:36:12", "36:12"
+  const s = Math.max(0, Math.ceil(ms / 1000)), d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
+  return d ? `${d} d ${pad2(h)}:${pad2(m)}:${pad2(x)}` : h ? `${h}:${pad2(m)}:${pad2(x)}` : `${m}:${pad2(x)}`;
+}
+const cdSpan = left => `<b class="cdn" data-until="${Date.now() + left}">${fmtHMS(left)}</b>`;
+const tCd = (key, left) => esc(t(key, { t: '\u0001' })).replace('\u0001', cdSpan(left));
+function clockInner(ms){
+  const s = Math.max(0, Math.ceil(ms / 1000)), d = Math.floor(s / 86400), parts = [[Math.floor(s % 86400 / 3600), 'cl_h'], [Math.floor(s % 3600 / 60), 'cl_m'], [s % 60, 'cl_s']];
+  if (d) parts.unshift([d, 'cl_d']);
+  return parts.map(([v, k]) => `<span><b>${pad2(v)}</b><i>${esc(t(k))}</i></span>`).join('');
+}
 function fmtDur(ms){ const h = Math.floor(ms / 36e5), d = Math.floor(h / 24); return d >= 1 ? t('dur_d', { d, h: h % 24 }) : fmtLeft(ms); }
 function missCooldown(group){
   const m = state.miss, hrs = m.st.vote_hours * 36e5;
@@ -349,12 +361,22 @@ function missFavView(){
       <div class="mfav-top"><button class="mphoto" data-mopen="${c.id}">${ph ? `<img src="${esc(ph)}" alt="" loading="lazy">` : `<span>${esc(c.first_name[0] || '?')}</span>`}</button>
         <div class="mfav-info"><b>${esc(c.first_name)}</b> ${flagOf(c.country)} <span class="small">· ${votesTxt(c.votes)}</span><div class="mfav-st">${missPosLine(p)}</div></div></div>
       ${missMiniTable(c, true)}
-      <div class="mfav-act"><button class="btn primary" data-mvote="${c.id}" ${w || !missVoteOpen() ? 'disabled' : ''}>${w ? esc(t('next_vote_short', { t: fmtLeft(w.left) })) : missEnded() ? t('round_ended') : t('vote')}</button>
+      <div class="mfav-act"><button class="btn primary" data-mvote="${c.id}" ${w || !missVoteOpen() ? 'disabled' : ''}>${w ? tCd('next_vote_short', w.left) : missEnded() ? t('round_ended') : t('vote')}</button>
         <button class="btn" data-mopen="${c.id}">${t('share')}</button></div></div>`; }).join('')}</div>
     <p class="small" style="margin:8px 0 0">${t('fav_note')}</p>`;
 }
-function missCountTxt(){ const left = missEndsLeft(); return left ? fmtDur(left) : missEnded() ? t('round_ended') : ''; }
-setInterval(() => document.querySelectorAll('[data-mcount]').forEach(el => { el.textContent = missCountTxt(); }), 30000);
+function missCountTxt(){ const left = missEndsLeft(); return left ? fmtHMS(left) : missEnded() ? t('round_ended') : ''; }
+let missWasEnded = null;
+setInterval(() => { // every second: round clock, "next vote in" timers; re-render when a timer runs out
+  if (!state.miss) return;
+  const now = Date.now(), left = missEndsLeft(); let stale = false;
+  document.querySelectorAll('[data-until]').forEach(el => { const l = +el.dataset.until - now; if (l <= 0) stale = true; else el.textContent = fmtHMS(l); });
+  document.querySelectorAll('[data-mclock]').forEach(el => { if (left) el.innerHTML = clockInner(left); });
+  document.querySelectorAll('[data-mcount]').forEach(el => { el.textContent = missCountTxt(); });
+  const hc = document.querySelector('.mhead-c'); if (hc && left) hc.classList.toggle('urgent', left < 864e5);
+  const ended = missEnded(); if (missWasEnded === false && ended) stale = true; missWasEnded = ended;
+  if (stale && $('#modal').hidden && !document.querySelector('.cropov')) renderMiss();
+}, 1000);
 function missMiniTable(c, noHead){
   const list = missSorted(c.group_no), adv = missAdvOf(list.length);
   return `<div class="mmini">${noHead ? '' : `<div class="mmini-h">${esc(t('group_n', { n: c.group_no }))}</div>`}${list.map((x, i) => `${i === adv ? `<div class="mmini-cut">${t('out_zone')}</div>` : ''}<button class="mmini-r ${x.id === c.id ? 'me' : ''}" data-mopen="${x.id}"><span class="mmini-n ${i < adv ? 'adv' : ''}">${i + 1}.</span><span class="mmini-name">${esc(x.first_name)} ${flagOf(x.country)}</span><b>${x.votes}</b></button>`).join('')}</div>`;
@@ -377,7 +399,7 @@ function missStatsView(){
       <div class="mst-tile"><span class="small">${t('st_groups')}</span><b>${groups}</b></div>
       <div class="mst-tile"><span class="small">${t('st_avg_age')}</span><b>${esc(t('years_short', { n: avgAge }))}</b></div>
       <div class="mst-tile"><span class="small">${t('st_adv')}</span><b>${advTotal}</b></div>
-      ${left ? `<div class="mst-tile"><span class="small">${t('st_left')}</span><b>${fmtDur(left)}</b></div>` : ''}</div>
+      ${left ? `<div class="mst-tile"><span class="small">${t('st_left')}</span><b data-mcount>${fmtHMS(left)}</b></div>` : ''}</div>
     <section class="mgroup"><div class="mgroup-h"><b>${t('race_title')}</b></div>
       ${race.map(([k, o], i) => `<div class="mst-row"><span>${i + 1}. ${flagOf(k)} ${esc(countryName(k))}</span><div class="mst-bar"><i style="width:${Math.round(100 * o.adv / Math.max(1, race[0][1].adv))}%"></i></div><span style="white-space:nowrap">${t('race_row', { n: o.adv })}${o.lead ? ` · ${o.lead}×👑` : ''}</span></div>`).join('')}
       <p class="small" style="margin:6px 0 0">${t('race_hint')}</p></section>
@@ -406,7 +428,7 @@ function renderMiss(){
       <div class="mhead-t"><h1>👑 ${esc(st.title)}</h1>
         <span class="mhead-meta">${esc(t('round_n', { n: st.current_round }))} · ${esc(t('contestants_n', { n: m.board.length }))} · ${esc(t('groups_n', { n: groups.length }))} · ${esc(t('vote_every', { h: st.vote_hours }))} · <button class="mlink" data-act="rules">${t('rules')}</button>${st.voting_open ? '' : ` · <b>${t('voting_paused')}</b>`}</span>
         <p class="mtag">${t('tagline')}</p></div>
-      ${st.round_ends_at ? `<div class="mhead-c ${missEnded() ? 'over' : ''}">${missEnded() ? `⏳ ${esc(t('round_over', { n: st.current_round }))}` : `<span>⏳ ${t('ends_in')}</span><b data-mcount>${missCountTxt()}</b>`}</div>` : ''}
+      ${st.round_ends_at ? `<div class="mhead-c ${missEnded() ? 'over' : (missEndsLeft() < 864e5 ? 'urgent' : '')}">${missEnded() ? `⏳ ${esc(t('round_over', { n: st.current_round }))}` : `<span class="mhead-l">⏳ ${t('ends_in')}</span><div class="mclk" data-mclock>${clockInner(missEndsLeft())}</div>`}</div>` : ''}
       <div class="mhead-a">${state.user ? `<span class="small">${t('credits')}: <b>${m.credits}</b></span> <button class="btn" data-act="credits">${t('buy')}</button>` : ''} ${cta}</div>
     </section>
     ${isAdmin() ? '<div id="missAdmin"></div>' : ''}
@@ -425,7 +447,7 @@ function advLabel(adv){ return adv === 1 ? t('adv_one') : t('adv_range', { n: ad
 function missGroupCompact(g){
   const list = missSorted(g), adv = missAdvOf(list.length), fav = missFavs(), f = state.missFlag;
   const cd = state.user ? missCooldown(g) : null, open = missVoteOpen();
-  return `<div class="mfav mgc"><div class="mgc-h"><b>${esc(t('group_n', { n: g }))}</b><span class="small">${cd ? esc(t('next_vote_short', { t: fmtLeft(cd.left) })) : missEnded() ? t('round_ended') : esc(advLabel(adv))}</span></div>
+  return `<div class="mfav mgc"><div class="mgc-h"><b>${esc(t('group_n', { n: g }))}</b><span class="small">${cd ? `<span class="mcd">⏱ ${tCd('next_vote_short', cd.left)}</span>` : missEnded() ? t('round_ended') : esc(advLabel(adv))}</span></div>
     ${list.map((c, i) => { const r = i + 1, mine = cd && cd.contestant === c.id;
       return `${i === adv ? `<div class="mmini-cut">${t('out_zone')}</div>` : ''}<div class="mgc-r ${f ? (c.country === f ? 'hl' : 'dim') : ''} ${fav.includes(c.id) ? 'fav' : ''}">
         <span class="mmini-n ${r <= adv ? 'adv' : ''}">${r === 1 && c.votes > 0 ? '👑' : r + '.'}</span>
@@ -437,7 +459,7 @@ function missGroupCompact(g){
 function missGroup(g){
   const list = missSorted(g), adv = missAdvOf(list.length), fav = missFavs(), f = state.missFlag;
   const cd = state.user ? missCooldown(g) : null;
-  return `<section class="mgroup"><div class="mgroup-h"><b>${esc(t('group_n', { n: g }))}</b>${cd ? `<span class="small">${esc(t('next_vote_in', { t: fmtLeft(cd.left) }))}</span>` : `<span class="small">${esc(advLabel(adv))}</span>`}</div>
+  return `<section class="mgroup"><div class="mgroup-h"><b>${esc(t('group_n', { n: g }))}</b>${cd ? `<span class="mcd">⏱ ${tCd('next_vote_in', cd.left)}</span>` : `<span class="small">${esc(advLabel(adv))}</span>`}</div>
     <div class="mrow">${list.map((c, i) => {
       const ph = missPhotoOf(c), mineHere = cd && cd.contestant === c.id, r = i + 1, isFav = fav.includes(c.id);
       return `<div class="mcard ${f ? (c.country === f ? 'hl' : 'dim') : ''} ${r === adv + 1 ? 'cutl' : ''} ${r > adv ? 'outz' : ''}" data-cut="${esc(t('out_zone'))}">
