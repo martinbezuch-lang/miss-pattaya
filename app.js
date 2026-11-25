@@ -35,7 +35,7 @@ function t(key, v = {}){
   if (typeof s === 'object'){ s = s[plural.select(Number(v.n))] ?? s.other ?? s.one; }
   return String(s).replace(/\{(\w+)\}/g, (_, k) => v[k] ?? '');
 }
-const ord = n => ({ en: n + (n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th'), ru: n + '-е', ko: n + '위', ja: n + '位', hi: 'स्थान ' + n }[LANG] || n + '.');
+const ord = n => ({ en: n + (n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th'), ru: n + '-е', ko: n + '위', ja: n + '位', hi: 'स्थान ' + n, th: 'ที่ ' + n }[LANG] || n + '.');
 const place = n => t('place', { o: ord(n) });
 const votesTxt = n => t('votes_n', { n });
 const creditsTxt = n => t('credits_n', { n });
