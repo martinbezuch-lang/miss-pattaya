@@ -494,8 +494,9 @@ async function openMissProfile(id){
 async function adminSetPhoto(id, f){
   if (!f || !isAdmin()) return false;
   try {
+    const blob = await cropImage(f);
+    if (!blob) return false;
     toast(t('loading'));
-    const blob = await resizeImage(f, 1000);
     const path = await api.uploadMissPhoto('admin', blob);
     await api.missSetPhoto(id, path);
     toast(t('ad_photo_ok'));
@@ -503,7 +504,7 @@ async function adminSetPhoto(id, f){
     return true;
   } catch(err){ toast(errMsg(err) || t('photo_fail'), true); return false; }
 }
-document.addEventListener('change', e => { const el = e.target.closest && e.target.closest('[data-adph]'); if (el) adminSetPhoto(Number(el.dataset.adph), el.files[0]); });
+document.addEventListener('change', e => { const el = e.target.closest && e.target.closest('[data-adph]'); if (el){ const f = el.files[0]; el.value = ''; adminSetPhoto(Number(el.dataset.adph), f); } });
 function openMissCredits(){
   openModal(`<h2>${t('cr_title')}</h2><p class="sub">${t('cr_text')}</p>
     <div class="box"><b>${t('cr_soon')}</b><p class="small" style="margin:6px 0 0">${esc(t('cr_soon_text', { n: creditsTxt(state.miss?.credits ?? 0) }))}</p></div>`);
@@ -536,7 +537,7 @@ async function openMissSignup(){
   let photoBlob = null;
   $('#mfile').addEventListener('change', async e => {
     const f = e.target.files[0]; if (!f) return;
-    try { photoBlob = await resizeImage(f, 1000); $('#mupLbl').querySelector('img, span').outerHTML = `<img src="${URL.createObjectURL(photoBlob)}" alt="">`; }
+    try { const b = await cropImage(f); e.target.value = ''; if (!b) return; photoBlob = b; $('#mupLbl').querySelector('img, span').outerHTML = `<img src="${URL.createObjectURL(photoBlob)}" alt="">`; }
     catch { $('#mErr').textContent = t('photo_fail'); }
   });
   $('#missForm').addEventListener('submit', async e => {
@@ -552,6 +553,60 @@ async function openMissSignup(){
       toast(me.id ? t('saved') : t('submitted'));
       closeModal(); await loadMiss(); renderMiss();
     } catch(err){ $('#mErr').textContent = errMsg(err); btn.disabled = false; }
+  });
+}
+/* photo cropper: drag to move, wheel / pinch / slider to zoom; returns a 3:4 JPEG blob or null */
+function cropImage(file){
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onerror = () => reject(new Error('img'));
+    img.onload = () => {
+      const ov = document.createElement('div');
+      ov.className = 'cropov';
+      ov.innerHTML = `<div class="cropdlg" role="dialog" aria-modal="true" aria-label="${esc(t('crop_title'))}"><h2>${esc(t('crop_title'))}</h2><p class="sub">${esc(t('crop_hint'))}</p>
+        <div class="cropbox"><img alt="" draggable="false"></div>
+        <label class="cropzoom"><span>−</span><input type="range" min="1" max="4" step="0.01" value="1" aria-label="${esc(t('crop_zoom'))}"><span>+</span></label>
+        <div class="actions"><button type="button" class="btn ghost" data-c="0">${esc(t('cancel'))}</button><button type="button" class="btn primary" data-c="1">${esc(t('crop_save'))}</button></div></div>`;
+      document.body.appendChild(ov);
+      const box = ov.querySelector('.cropbox'), im = box.querySelector('img'), zr = ov.querySelector('input[type=range]');
+      im.src = img.src;
+      let z = 1, x = 0, y = 0;
+      const W = () => box.clientWidth, H = () => box.clientHeight;
+      const base = () => Math.max(W() / img.naturalWidth, H() / img.naturalHeight);
+      const clamp = () => { const s = base() * z, mx = Math.max(0, (img.naturalWidth * s - W()) / 2), my = Math.max(0, (img.naturalHeight * s - H()) / 2);
+        x = Math.min(mx, Math.max(-mx, x)); y = Math.min(my, Math.max(-my, y)); };
+      const draw = () => { clamp(); const s = base() * z;
+        im.style.width = img.naturalWidth * s + 'px'; im.style.height = img.naturalHeight * s + 'px';
+        im.style.transform = `translate(${x - img.naturalWidth * s / 2}px, ${y - img.naturalHeight * s / 2}px)`; zr.value = z; };
+      const zoomTo = nz => { nz = Math.min(4, Math.max(1, nz)); x *= nz / z; y *= nz / z; z = nz; draw(); };
+      draw(); requestAnimationFrame(draw);
+      const pts = new Map(); let pinch = 0;
+      box.addEventListener('pointerdown', e => { box.setPointerCapture(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]); pinch = 0; });
+      box.addEventListener('pointermove', e => {
+        if (!pts.has(e.pointerId)) return;
+        const prev = pts.get(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]);
+        if (pts.size === 1){ x += e.clientX - prev[0]; y += e.clientY - prev[1]; draw(); }
+        else { const [a, b] = [...pts.values()], d = Math.hypot(a[0] - b[0], a[1] - b[1]); if (pinch) zoomTo(z * d / pinch); pinch = d; }
+      });
+      const up = e => { pts.delete(e.pointerId); pinch = 0; };
+      box.addEventListener('pointerup', up); box.addEventListener('pointercancel', up);
+      box.addEventListener('wheel', e => { e.preventDefault(); zoomTo(z * (e.deltaY < 0 ? 1.08 : 1 / 1.08)); }, { passive: false });
+      zr.addEventListener('input', () => zoomTo(+zr.value));
+      const done = v => { ov.remove(); document.removeEventListener('keydown', key, true); URL.revokeObjectURL(img.src); resolve(v); };
+      const key = e => { if (e.key === 'Escape'){ e.stopPropagation(); done(null); } };
+      document.addEventListener('keydown', key, true);
+      ov.addEventListener('click', e => {
+        const b = e.target.closest('[data-c]'); if (!b) return;
+        if (b.dataset.c === '0') return done(null);
+        const s = base() * z, OW = 900, OH = 1200, cv = document.createElement('canvas');
+        cv.width = OW; cv.height = OH;
+        const left = W() / 2 + x - img.naturalWidth * s / 2, top = H() / 2 + y - img.naturalHeight * s / 2;
+        const ctx = cv.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, OW, OH);
+        ctx.drawImage(img, -left / s, -top / s, W() / s, H() / s, 0, 0, OW, OH);
+        cv.toBlob(bl => { ov.remove(); document.removeEventListener('keydown', key, true); URL.revokeObjectURL(img.src); bl ? resolve(bl) : reject(new Error('blob')); }, 'image/jpeg', 0.86);
+      });
+    };
+    img.src = URL.createObjectURL(file);
   });
 }
 function resizeImage(file, max){
