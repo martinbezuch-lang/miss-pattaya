@@ -146,6 +146,7 @@ function makeDemoApi(){
       store.set(K.c, l);
     },
     async uploadMissPhoto(uid, blob){ return await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(blob); }); },
+    async missSetPhoto(id, path){ const l = store.get(K.c, []), c = l.find(x => x.id === id); if (c){ c.photo_path = path; store.set(K.c, l); } },
     async missWallet(uid){ return store.get(K.w, {})[uid] || 0; },
     async missPending(){ return store.get(K.c, []).filter(c => c.status === 'pending'); },
     async missSetStatus(id, status){
@@ -214,6 +215,7 @@ async function makeSupabaseApi(){
     async missWallet(){ const r = chk(await sb.from('miss_wallets').select('credits').maybeSingle()); return r ? r.credits : 0; },
     async missPending(){ return chk(await sb.from('miss_contestants').select('*').eq('status', 'pending').order('created_at')); },
     async missSetStatus(id, status){ chk(await sb.from('miss_contestants').update({ status }).eq('id', id)); },
+    async missSetPhoto(id, path){ const r = chk(await sb.from('miss_contestants').update({ photo_path: path }).eq('id', id).select('id')); if (!r || !r.length) throw new Error('E:ADMIN_ONLY'); },
     async missNewRound(elim, size, pots, ends){ return chk(await sb.rpc('miss_new_round', { p_eliminate:elim, p_group_size:size, p_pots:pots, p_round_ends:ends })); },
     async missGrant(email, amount){ return chk(await sb.rpc('miss_grant_credits', { p_email:email, p_amount:amount })); },
     async missHistory(id){ return chk(await sb.from('miss_round_results').select('round,group_no,place,votes,advanced').eq('contestant_id', id).order('round')); }
@@ -471,6 +473,7 @@ async function openMissProfile(id){
   const pos = missPos(c.id), boardC = state.miss?.board.find(x => x.id === c.id);
   openModal(`<div class="mprof">
     <div class="mprof-side"><div class="mprof-mhead"><h2>${esc(c.first_name)}</h2><p class="sub" style="margin:0">${sub}</p></div><div class="mprof-photo">${ph ? `<img src="${esc(ph)}" alt="${esc(c.first_name)}">` : `<span>${esc(c.first_name[0] || '?')}</span>`}</div>
+      ${isAdmin() ? `<label class="btn" style="display:block;text-align:center;margin:8px 0;cursor:pointer">📷 ${esc(t('ad_photo'))}<input type="file" id="adPhoto" accept="image/*" hidden></label>` : ''}
       ${hist.length ? `<div class="mhist">${hist.map(h => `<div class="mhist-r"><span>${esc(t('hist_round', { r: h.round }))}</span><span>${esc(place(h.place))}</span><span>${votesTxt(h.votes)}</span><b class="${h.advanced ? 'up' : 'down'}">${h.advanced ? t('hist_adv') : t('hist_out')}</b></div>`).join('')}</div>` : ''}
       ${inRound ? `<div class="mstat">${esc(t('in_round', { v: votesTxt(c.votes), r: c.round, g: c.group_no }))}${pos ? '<br>' + missPosLine(pos) : ''}${state.miss?.st.round_ends_at ? `<br><span class="small">⏳ ${missEnded() ? t('round_ended') : `${t('ends_in')} <b data-mcount>${missCountTxt()}</b>`}</span>` : ''}</div>${boardC ? missMiniTable(boardC) : ''}` : c.eliminated_round ? `<div class="mstat">${esc(t('left_in', { r: c.eliminated_round }))}</div>` : ''}</div>
     <div class="mprof-body"><h2>${esc(c.first_name)}</h2>
@@ -486,6 +489,17 @@ async function openMissProfile(id){
         <p class="small" style="margin:6px 0 0">${t('credit_eq')} ${state.user ? esc(t('you_have', { n: creditsTxt(state.miss?.credits ?? 0) })) : ''}</p></div>${pos ? missShareBox(c.id, state.miss?.me && Number(state.miss.me.id) === c.id) : ''}` : ''}
       <p class="small" style="margin-top:10px">${t('profile_link')} <a href="#c-${c.id}">${esc(missUrl(c.id))}</a></p>
     </div></div>`, true);
+  $('#adPhoto')?.addEventListener('change', async e => {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      toast(t('loading'));
+      const blob = await resizeImage(f, 1000);
+      const path = await api.uploadMissPhoto('admin', blob);
+      await api.missSetPhoto(c.id, path);
+      toast(t('ad_photo_ok'));
+      await loadMiss(); renderMiss(); openMissProfile(c.id);
+    } catch(err){ toast(errMsg(err) || t('photo_fail'), true); }
+  });
 }
 function openMissCredits(){
   openModal(`<h2>${t('cr_title')}</h2><p class="sub">${t('cr_text')}</p>
