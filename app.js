@@ -5,11 +5,23 @@
    ===================================================================== */
 import { T, LANGS } from './i18n.js';
 
-const CONFIG = {
-  SUPABASE_URL: 'https://gtblftngzitbiwmrvomj.supabase.co',
-  SUPABASE_ANON_KEY: 'sb_publishable_p7mVlg_b_GWr9-XjQBrHBw_qzF6XQlC', // public (publishable) key
-  GOOGLE_LOGIN: false // turn on after enabling Google in Supabase → Authentication → Providers
+// The same files run the public site and the private test copy (repo miss-pattaya-test / test.* subdomain).
+const IS_TEST = /\/miss-pattaya-test(\/|$)/.test(location.pathname) || /^test\./.test(location.hostname);
+const CONFIGS = {
+  live: {
+    SUPABASE_URL: 'https://gtblftngzitbiwmrvomj.supabase.co',
+    SUPABASE_ANON_KEY: 'sb_publishable_p7mVlg_b_GWr9-XjQBrHBw_qzF6XQlC', // public (publishable) key
+    GOOGLE_LOGIN: false, // turn on after enabling Google in Supabase → Authentication → Providers
+    PRIVATE: false
+  },
+  test: { // private: only admins of the test database see anything, photos are in a private bucket
+    SUPABASE_URL: '',
+    SUPABASE_ANON_KEY: '',
+    GOOGLE_LOGIN: false,
+    PRIVATE: true
+  }
 };
+const CONFIG = IS_TEST ? CONFIGS.test : CONFIGS.live;
 const DEMO = !CONFIG.SUPABASE_URL || !CONFIG.SUPABASE_ANON_KEY;
 
 /* ---------------- helpers ---------------- */
@@ -69,7 +81,14 @@ setLang(LANG);
 const LINK_DEFS = [['instagram','Instagram','https://instagram.com/'],['tiktok','TikTok','https://www.tiktok.com/@'],['youtube','YouTube','https://youtube.com/@'],
   ['onlyfans','OnlyFans','https://onlyfans.com/'],['x','X / Twitter','https://x.com/'],['linktree','Linktree','https://linktr.ee/'],['web','Web','']];
 const PER_PAGE = 10;
-const missPhoto = p => !p ? '' : (DEMO ? p : `${CONFIG.SUPABASE_URL}/storage/v1/object/public/miss/${p}`);
+const signedPhotos = new Map(); // private copy: path → temporary signed URL
+const missPhoto = p => !p ? '' : DEMO ? p : CONFIG.PRIVATE ? (signedPhotos.get(p) || '') : `${CONFIG.SUPABASE_URL}/storage/v1/object/public/miss/${p}`;
+async function signPhotos(paths){
+  if (DEMO || !CONFIG.PRIVATE) return;
+  const need = [...new Set(paths.filter(p => p && !signedPhotos.has(p)))];
+  if (!need.length) return;
+  try { for (const x of await api.signPhotos(need)) if (x.signedUrl) signedPhotos.set(x.path, x.signedUrl); } catch(e){ console.warn(e); }
+}
 const missPhotoOf = c => missPhoto(c.photo_path);
 function normLink(key, v){
   v = (v || '').trim(); if (!v) return '';
@@ -146,6 +165,7 @@ function makeDemoApi(){
       store.set(K.c, l);
     },
     async uploadMissPhoto(uid, blob){ return await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(blob); }); },
+    async signPhotos(){ return []; },
     async missSetPhoto(id, path){ const l = store.get(K.c, []), c = l.find(x => x.id === id); if (c){ c.photo_path = path; store.set(K.c, l); } },
     async missWallet(uid){ return store.get(K.w, {})[uid] || 0; },
     async missPending(){ return store.get(K.c, []).filter(c => c.status === 'pending'); },
@@ -215,6 +235,7 @@ async function makeSupabaseApi(){
     async missWallet(){ const r = chk(await sb.from('miss_wallets').select('credits').maybeSingle()); return r ? r.credits : 0; },
     async missPending(){ return chk(await sb.from('miss_contestants').select('*').eq('status', 'pending').order('created_at')); },
     async missSetStatus(id, status){ chk(await sb.from('miss_contestants').update({ status }).eq('id', id)); },
+    async signPhotos(paths){ return chk(await sb.storage.from('miss').createSignedUrls(paths, 6 * 3600)); },
     async missSetPhoto(id, path){ const r = chk(await sb.from('miss_contestants').update({ photo_path: path }).eq('id', id).select('id')); if (!r || !r.length) throw new Error('E:ADMIN_ONLY'); },
     async missNewRound(elim, size, pots, ends){ return chk(await sb.rpc('miss_new_round', { p_eliminate:elim, p_group_size:size, p_pots:pots, p_round_ends:ends })); },
     async missGrant(email, amount){ return chk(await sb.rpc('miss_grant_credits', { p_email:email, p_amount:amount })); },
@@ -237,6 +258,7 @@ async function loadAuth(){
 async function loadMiss(){
   const [st, board] = await Promise.all([api.missSettings(), api.missBoard()]);
   const mine = state.user ? await Promise.all([api.myMissVotes(state.user.id, st.current_round).catch(() => []), api.missWallet(state.user.id).catch(() => 0), api.myContestant(state.user.id).catch(() => null)]) : [[], 0, null];
+  await signPhotos([...board.map(c => c.photo_path), mine[2]?.photo_path]);
   state.miss = { st, board: board.map(c => ({ ...c, id: Number(c.id) })), myVotes: mine[0], credits: mine[1], me: mine[2] };
   const fav = missFavs(); let ch = false;
   for (const v of state.miss.myVotes){ const id = Number(v.contestant_id); if (!fav.includes(id) && !missUnfav().includes(id)){ fav.push(id); ch = true; } }
@@ -487,6 +509,7 @@ async function openMissProfile(id){
   openModal(`<div class="empty">${t('loading')}</div>`);
   let c, hist = [];
   try { [c, hist] = await Promise.all([api.missProfile(id), api.missHistory(id).catch(() => [])]); } catch(err){ openModal(`<p>${esc(errMsg(err))}</p>`); return; }
+  if (c) await signPhotos([c.photo_path]);
   if (!c){ openModal(`<h2>${t('nf_title')}</h2><p class="sub">${t('nf_text')}</p>`); return; }
   const ph = missPhotoOf(c), links = c.links || {};
   const inRound = !c.eliminated_round && c.round === state.miss?.st.current_round && c.status === 'approved';
@@ -656,7 +679,7 @@ const toLocalInput = iso => new Date(Date.parse(iso) - new Date().getTimezoneOff
 async function renderMissAdmin(){
   const el = $('#missAdmin'); if (!el) return;
   const st = state.miss.st; let pend = [];
-  try { pend = await api.missPending(); } catch {}
+  try { pend = await api.missPending(); await signPhotos(pend.map(c => c.photo_path)); } catch {}
   el.innerHTML = `<div class="panel"><h3>${esc(t('ad_title', { t: st.title }))}</h3>
     <h4 class="sec" style="margin-top:12px">${esc(t('ad_pending', { n: pend.length }))}</h4>
     ${pend.length ? `<div class="mpend">${pend.map(c => `<div class="mpc"><button class="mphoto sm" data-mopen="${c.id}">${c.photo_path ? `<img src="${esc(missPhoto(c.photo_path))}" alt="">` : `<span>${esc(c.first_name[0])}</span>`}</button>
@@ -742,7 +765,7 @@ function openRules(){
 
 /* ---------------- sign in & profile ---------------- */
 function openLogin(mode){
-  const up = mode === 'up', join = joinIntent.get();
+  const up = mode === 'up' && !CONFIG.PRIVATE, join = joinIntent.get() && !CONFIG.PRIVATE;
   openModal(`<h2>${join ? t('jn_t1') : t('li_title')}</h2><p class="sub">${join ? t('jn_s1') : t('li_sub')}</p>
     ${CONFIG.GOOGLE_LOGIN ? `<button class="oauth" data-act="google">${ICON_G} ${t('li_google')}</button><div class="or">${t('or')}</div>` : ''}
     <form id="pwForm">
@@ -750,7 +773,7 @@ function openLogin(mode){
       <div class="field"><input type="password" id="li_pw" required minlength="6" placeholder="${esc(t('password'))}" aria-label="${esc(t('password'))}" autocomplete="${up ? 'new-password' : 'current-password'}"></div>
       <button class="btn primary" style="width:100%" type="submit">${up ? t('li_up') : t('li_in')}</button>
     </form>
-    <p class="small" style="margin:10px 0 0;text-align:center"><button class="mlink" data-act="${up ? 'login2' : 'loginup2'}">${up ? t('li_have') : t('li_no')}</button></p>
+    ${CONFIG.PRIVATE ? '' : `<p class="small" style="margin:10px 0 0;text-align:center"><button class="mlink" data-act="${up ? 'login2' : 'loginup2'}">${up ? t('li_have') : t('li_no')}</button></p>`}
     <p class="small" style="margin:6px 0 0;text-align:center"><button class="mlink" data-act="magic">${t('li_magic')}</button></p>
     ${api.mode === 'demo' ? `<div class="or">demo</div><div class="actions" style="justify-content:center"><button class="btn" data-act="demoadmin">${t('li_demo_admin')}</button><button class="btn" data-act="demouser">${t('li_demo_user')}</button></div>` : ''}
     <div class="err" id="loginErr"></div>`);
@@ -788,7 +811,7 @@ function openProfile(){
   $('#profileForm').addEventListener('submit', async e => {
     e.preventDefault();
     const data = { gender: document.querySelector('input[name=gender]:checked')?.value, birth_year: Number($('#by').value), country: $('#pco').value, lang: LANG };
-    try { await api.saveProfile(state.user.id, data); await loadAuth(); closeModal(); renderUser(); await loadMiss(); renderMiss(); if (!continueJoin()) toast(t('pf_saved')); }
+    try { await api.saveProfile(state.user.id, data); await loadAuth(); closeModal(); renderUser(); if (privateGate()) return; await loadMiss(); renderMiss(); if (!continueJoin()) toast(t('pf_saved')); }
     catch(err){ $('#pErr').textContent = errMsg(err); }
   });
 }
@@ -868,6 +891,13 @@ async function geoBlocked(){
   } catch { return false; } // if the lookup fails, let the visitor in
   return GEO_BLOCK.countries.includes(String(cc || '').toUpperCase());
 }
+function privateGate(){ // private copy: only admins get past the sign-in screen
+  if (!CONFIG.PRIVATE || realAdmin()) return false;
+  const msg = !state.user ? t('pv_login') : state.profile ? t('pv_denied') : t('pv_profile');
+  $('#app').innerHTML = `<div class="empty" style="padding:60px 20px"><h2 style="margin:0 0 8px">🔒 ${esc(t('pv_title'))}</h2><p>${esc(msg)}</p>${state.user ? '' : `<button class="btn primary" data-act="login">${t('login')}</button>`}</div>`;
+  if (state.user && !state.profile) openProfile();
+  return true;
+}
 const showGeoBlock = () => { $('#app').innerHTML = `<div class="empty" style="padding:60px 20px"><h2 style="margin:0 0 8px">👑 ${esc(t('site'))}</h2><p>${esc(t('geo_block'))}</p></div>`; };
 
 /* ---------------- start ---------------- */
@@ -877,10 +907,12 @@ try {
   await loadAuth();
   renderUser();
   $('#app').innerHTML = `<div class="empty">${t('loading')}</div>`;
-  state.geo = await geoBlocked();
+  if (IS_TEST){ document.title = 'TEST · ' + document.title; $('header .logo')?.insertAdjacentHTML('beforeend', '<span class="testbadge">TEST</span>'); }
+  state.geo = CONFIG.PRIVATE ? false : await geoBlocked();
   if (state.geo && !realAdmin()) showGeoBlock();
+  else if (privateGate()) {}
   else { await loadMiss(); renderMiss(); route(); if (!continueJoin() && state.user && !state.profile) openProfile(); }
-  api.onAuth(async () => { if (!$('#modal').hidden && $('#pwForm')) closeModal(); await loadAuth(); renderUser(); if (state.geo && !realAdmin()) return showGeoBlock(); await loadMiss(); renderMiss(); if (!continueJoin() && state.user && !state.profile) openProfile(); });
+  api.onAuth(async () => { if (!$('#modal').hidden && $('#pwForm')) closeModal(); await loadAuth(); renderUser(); if (state.geo && !realAdmin()) return showGeoBlock(); if (privateGate()) return; await loadMiss(); renderMiss(); if (!continueJoin() && state.user && !state.profile) openProfile(); });
 } catch(err){
   console.error(err);
   $('#app').innerHTML = `<div class="empty">${esc(t('load_fail', { e: errMsg(err) }))}</div>`;
