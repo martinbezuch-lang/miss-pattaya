@@ -509,12 +509,23 @@ function openMissCredits(){
   openModal(`<h2>${t('cr_title')}</h2><p class="sub">${t('cr_text')}</p>
     <div class="box"><b>${t('cr_soon')}</b><p class="small" style="margin:6px 0 0">${esc(t('cr_soon_text', { n: creditsTxt(state.miss?.credits ?? 0) }))}</p></div>`);
 }
-async function openMissSignup(){
-  if (!state.user) return openLogin();
-  if (!state.profile) return openProfile();
+/* "Enter the competition" is a 3-step flow: account → short profile → entry form */
+const joinIntent = { get: () => { try { return sessionStorage.getItem('mp_join') === '1'; } catch { return false; } },
+  set: v => { try { v ? sessionStorage.setItem('mp_join', '1') : sessionStorage.removeItem('mp_join'); } catch {} } };
+function continueJoin(){ // after sign-in / profile: carry on where the contestant left off
+  if (!joinIntent.get() || !state.user) return false;
+  if (!state.profile){ openProfile(); return true; }
+  joinIntent.set(false);
+  if (state.profile.gender !== 'female'){ toast(t('women_only'), true); return true; }
+  openMissSignup(true); return true;
+}
+async function openMissSignup(viaJoin){
+  if (!state.user){ joinIntent.set(true); return openLogin('up'); }
+  if (!state.profile){ joinIntent.set(true); return openProfile(); }
+  joinIntent.set(false);
   const me = state.miss.me || {}, L = me.links || {};
   const maxBirth = new Date(Date.now() - 18 * 365.25 * 864e5).toISOString().slice(0, 10);
-  openModal(`<h2>${me.id ? t('su_edit') : t('su_new')}</h2>
+  openModal(`<h2>${me.id ? t('su_edit') : viaJoin ? t('jn_t3') : t('su_new')}</h2>
     <p class="sub">${t('su_sub')}</p>
     <form id="missForm">
       <div class="mform-top"><label class="mphoto mup" id="mupLbl">${me.photo_path ? `<img src="${esc(missPhoto(me.photo_path))}" alt="">` : `<span>${t('add_photo')}</span>`}<input type="file" id="mfile" accept="image/*" hidden></label>
@@ -709,15 +720,15 @@ function openRules(){
 
 /* ---------------- sign in & profile ---------------- */
 function openLogin(mode){
-  const up = mode === 'up';
-  openModal(`<h2>${t('li_title')}</h2><p class="sub">${t('li_sub')}</p>
+  const up = mode === 'up', join = joinIntent.get();
+  openModal(`<h2>${join ? t('jn_t1') : t('li_title')}</h2><p class="sub">${join ? t('jn_s1') : t('li_sub')}</p>
     ${CONFIG.GOOGLE_LOGIN ? `<button class="oauth" data-act="google">${ICON_G} ${t('li_google')}</button><div class="or">${t('or')}</div>` : ''}
     <form id="pwForm">
       <div class="field"><input type="email" id="li_email" required placeholder="${esc(t('email'))}" aria-label="${esc(t('email'))}" autocomplete="email"></div>
       <div class="field"><input type="password" id="li_pw" required minlength="6" placeholder="${esc(t('password'))}" aria-label="${esc(t('password'))}" autocomplete="${up ? 'new-password' : 'current-password'}"></div>
       <button class="btn primary" style="width:100%" type="submit">${up ? t('li_up') : t('li_in')}</button>
     </form>
-    <p class="small" style="margin:10px 0 0;text-align:center"><button class="mlink" data-act="${up ? 'login' : 'loginup'}">${up ? t('li_have') : t('li_no')}</button></p>
+    <p class="small" style="margin:10px 0 0;text-align:center"><button class="mlink" data-act="${up ? 'login2' : 'loginup2'}">${up ? t('li_have') : t('li_no')}</button></p>
     <p class="small" style="margin:6px 0 0;text-align:center"><button class="mlink" data-act="magic">${t('li_magic')}</button></p>
     ${api.mode === 'demo' ? `<div class="or">demo</div><div class="actions" style="justify-content:center"><button class="btn" data-act="demoadmin">${t('li_demo_admin')}</button><button class="btn" data-act="demouser">${t('li_demo_user')}</button></div>` : ''}
     <div class="err" id="loginErr"></div>`);
@@ -735,9 +746,10 @@ async function sendMagic(){
   try { await api.signInEmail(em); er.style.color = 'var(--up)'; er.textContent = t('li_magic_sent'); } catch(err){ er.style.color = ''; er.textContent = errMsg(err); }
 }
 function openProfile(){
-  const p = state.profile || {}, y = new Date().getFullYear(), years = [];
+  const join = joinIntent.get() && !state.profile;
+  const p = state.profile || (join ? { gender: 'female' } : {}), y = new Date().getFullYear(), years = [];
   for (let i = y - 13; i >= 1920; i--) years.push(i);
-  openModal(`<h2>${state.profile ? t('pf_title') : t('pf_new')}</h2><p class="sub">${t('pf_sub')}</p>
+  openModal(`<h2>${join ? t('jn_t2') : state.profile ? t('pf_title') : t('pf_new')}</h2><p class="sub">${join ? t('jn_s2') : t('pf_sub')}</p>
     <form id="profileForm">
       <div class="field"><label class="l">${t('gender')}</label>
         <div class="seg">${['female', 'male', 'other'].map((g, i) => `<label><input type="radio" name="gender" value="${g}" ${p.gender === g ? 'checked' : ''} ${i ? '' : 'required'}>${t(g)}</label>`).join('')}</div></div>
@@ -754,7 +766,7 @@ function openProfile(){
   $('#profileForm').addEventListener('submit', async e => {
     e.preventDefault();
     const data = { gender: document.querySelector('input[name=gender]:checked')?.value, birth_year: Number($('#by').value), country: $('#pco').value, lang: LANG };
-    try { await api.saveProfile(state.user.id, data); await loadAuth(); closeModal(); renderUser(); await loadMiss(); renderMiss(); toast(t('pf_saved')); }
+    try { await api.saveProfile(state.user.id, data); await loadAuth(); closeModal(); renderUser(); await loadMiss(); renderMiss(); if (!continueJoin()) toast(t('pf_saved')); }
     catch(err){ $('#pErr').textContent = errMsg(err); }
   });
 }
@@ -785,14 +797,16 @@ document.addEventListener('click', async e => {
   if (d.mpage){ state.missPage = Number(d.mpage); renderMiss(); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
   if (d.mst){ try { await api.missSetStatus(Number(d.id), d.mst); toast(d.mst === 'approved' ? t('ad_approved') : t('ad_rejected')); await loadMiss(); renderMiss(); } catch(err){ toast(errMsg(err), true); } return; }
   switch (d.act){
-    case 'login': return openLogin();
-    case 'loginup': return openLogin('up');
+    case 'login': joinIntent.set(false); return openLogin();
+    case 'loginup': joinIntent.set(false); return openLogin('up');
+    case 'login2': return openLogin();
+    case 'loginup2': return openLogin('up');
     case 'magic': return sendMagic();
     case 'google': try { await api.signInGoogle(); } catch(err){ $('#loginErr').textContent = errMsg(err); } return;
     case 'demoadmin': return api.demoLogin(true);
     case 'demouser': return api.demoLogin(false);
     case 'logout': return api.signOut();
-    case 'profile': return openProfile();
+    case 'profile': joinIntent.set(false); return openProfile();
     case 'asuser': state.asUser = !state.asUser; store.set('mp_as_user', state.asUser); renderUser(); renderMiss(); return;
     case 'theme': { const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = next; try { localStorage.setItem('mp_theme', next); } catch {} renderUser(); return; }
     case 'signup': return openMissSignup();
@@ -843,8 +857,8 @@ try {
   $('#app').innerHTML = `<div class="empty">${t('loading')}</div>`;
   state.geo = await geoBlocked();
   if (state.geo && !realAdmin()) showGeoBlock();
-  else { await loadMiss(); renderMiss(); route(); if (state.user && !state.profile) openProfile(); }
-  api.onAuth(async () => { await loadAuth(); renderUser(); if (state.geo && !realAdmin()) return showGeoBlock(); await loadMiss(); renderMiss(); if (state.user && !state.profile) openProfile(); });
+  else { await loadMiss(); renderMiss(); route(); if (!continueJoin() && state.user && !state.profile) openProfile(); }
+  api.onAuth(async () => { await loadAuth(); renderUser(); if (state.geo && !realAdmin()) return showGeoBlock(); await loadMiss(); renderMiss(); if (!continueJoin() && state.user && !state.profile) openProfile(); });
 } catch(err){
   console.error(err);
   $('#app').innerHTML = `<div class="empty">${esc(t('load_fail', { e: errMsg(err) }))}</div>`;
