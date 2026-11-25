@@ -446,7 +446,7 @@ function missGroup(g){
         ${c.instagram && missUi('instagram') ? `<a class="mig ${missUi('star') ? '' : 'nostar'}" href="${esc(normLink('instagram', c.instagram))}" target="_blank" rel="nofollow noopener ugc" aria-label="Instagram ${esc(c.first_name)}">Instagram</a>` : ''}
         <button class="mflagbig" data-mflag="${esc(c.country)}" title="${esc(t('flag_title', { c: countryName(c.country) }))}">${flagOf(c.country)}</button>
         ${r > adv && missUi('need') ? `<i class="mneedpill" title="${esc(t('short_title', { a: adv }))}">${esc(t('short_n', { n: list[adv - 1].votes - c.votes + 1 }))}</i>` : ''}</div>
-        <div class="mline"><span class="mnm">${esc(c.first_name)}<small>${c.age}</small></span><span class="mvotes"><b>${c.votes}</b></span></div>
+        <div class="mline"><span class="mnm">${esc(c.first_name)}<small>${c.age}</small></span>${isAdmin() ? `<label class="madph" title="${esc(t('ad_photo'))}" aria-label="${esc(t('ad_photo'))}: ${esc(c.first_name)}">📷<input type="file" accept="image/*" data-adph="${c.id}" hidden></label>` : ''}<span class="mvotes"><b>${c.votes}</b></span></div>
         <button class="btn ${mineHere ? '' : 'primary'} mvote" data-mvote="${c.id}" ${cd || !missVoteOpen() ? 'disabled' : ''}>${mineHere ? t('your_vote') : missEnded() ? t('round_ended') : t('vote')}</button>
       </div>`; }).join('')}</div></section>`;
 }
@@ -489,18 +489,21 @@ async function openMissProfile(id){
         <p class="small" style="margin:6px 0 0">${t('credit_eq')} ${state.user ? esc(t('you_have', { n: creditsTxt(state.miss?.credits ?? 0) })) : ''}</p></div>${pos ? missShareBox(c.id, state.miss?.me && Number(state.miss.me.id) === c.id) : ''}` : ''}
       <p class="small" style="margin-top:10px">${t('profile_link')} <a href="#c-${c.id}">${esc(missUrl(c.id))}</a></p>
     </div></div>`, true);
-  $('#adPhoto')?.addEventListener('change', async e => {
-    const f = e.target.files[0]; if (!f) return;
-    try {
-      toast(t('loading'));
-      const blob = await resizeImage(f, 1000);
-      const path = await api.uploadMissPhoto('admin', blob);
-      await api.missSetPhoto(c.id, path);
-      toast(t('ad_photo_ok'));
-      await loadMiss(); renderMiss(); openMissProfile(c.id);
-    } catch(err){ toast(errMsg(err) || t('photo_fail'), true); }
-  });
+  $('#adPhoto')?.addEventListener('change', async e => { if (await adminSetPhoto(c.id, e.target.files[0])) openMissProfile(c.id); });
 }
+async function adminSetPhoto(id, f){
+  if (!f || !isAdmin()) return false;
+  try {
+    toast(t('loading'));
+    const blob = await resizeImage(f, 1000);
+    const path = await api.uploadMissPhoto('admin', blob);
+    await api.missSetPhoto(id, path);
+    toast(t('ad_photo_ok'));
+    await loadMiss(); renderMiss();
+    return true;
+  } catch(err){ toast(errMsg(err) || t('photo_fail'), true); return false; }
+}
+document.addEventListener('change', e => { const el = e.target.closest && e.target.closest('[data-adph]'); if (el) adminSetPhoto(Number(el.dataset.adph), el.files[0]); });
 function openMissCredits(){
   openModal(`<h2>${t('cr_title')}</h2><p class="sub">${t('cr_text')}</p>
     <div class="box"><b>${t('cr_soon')}</b><p class="small" style="margin:6px 0 0">${esc(t('cr_soon_text', { n: creditsTxt(state.miss?.credits ?? 0) }))}</p></div>`);
