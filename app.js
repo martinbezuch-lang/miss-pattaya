@@ -735,8 +735,8 @@ function openLogin(mode){
   $('#pwForm').addEventListener('submit', async e => {
     e.preventDefault(); const em = $('#li_email').value.trim(), pw = $('#li_pw').value, er = $('#loginErr'); er.style.color = ''; er.textContent = '';
     try {
-      if (up){ const needConfirm = await api.signUpPassword(em, pw); if (needConfirm){ er.style.color = 'var(--up)'; er.textContent = t('li_check'); } }
-      else await api.signInPassword(em, pw);
+      if (up){ const needConfirm = await api.signUpPassword(em, pw); if (needConfirm){ er.style.color = 'var(--up)'; er.textContent = t('li_check'); } else if ($('#pwForm')) closeModal(); }
+      else { await api.signInPassword(em, pw); if ($('#pwForm')) closeModal(); }
     } catch(err){ er.textContent = errMsg(err); }
   });
 }
@@ -858,7 +858,7 @@ try {
   state.geo = await geoBlocked();
   if (state.geo && !realAdmin()) showGeoBlock();
   else { await loadMiss(); renderMiss(); route(); if (!continueJoin() && state.user && !state.profile) openProfile(); }
-  api.onAuth(async () => { await loadAuth(); renderUser(); if (state.geo && !realAdmin()) return showGeoBlock(); await loadMiss(); renderMiss(); if (!continueJoin() && state.user && !state.profile) openProfile(); });
+  api.onAuth(async () => { if (!$('#modal').hidden && $('#pwForm')) closeModal(); await loadAuth(); renderUser(); if (state.geo && !realAdmin()) return showGeoBlock(); await loadMiss(); renderMiss(); if (!continueJoin() && state.user && !state.profile) openProfile(); });
 } catch(err){
   console.error(err);
   $('#app').innerHTML = `<div class="empty">${esc(t('load_fail', { e: errMsg(err) }))}</div>`;
