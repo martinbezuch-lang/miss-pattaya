@@ -579,6 +579,7 @@ function cropImage(file){
         im.style.width = img.naturalWidth * s + 'px'; im.style.height = img.naturalHeight * s + 'px';
         im.style.transform = `translate(${x - img.naturalWidth * s / 2}px, ${y - img.naturalHeight * s / 2}px)`; zr.value = z; };
       const zoomTo = nz => { nz = Math.min(4, Math.max(1, nz)); x *= nz / z; y *= nz / z; z = nz; draw(); };
+      z = Math.min(4, Math.max(1, 1.2 * H() / (img.naturalHeight * base()))); // leave room to move up/down
       draw(); requestAnimationFrame(draw);
       const pts = new Map(); let pinch = 0;
       box.addEventListener('pointerdown', e => { box.setPointerCapture(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]); pinch = 0; });
