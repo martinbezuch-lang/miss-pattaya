@@ -819,6 +819,21 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#modal
 new MutationObserver(() => { if ($('#modal').hidden && /^#(c|miss)-/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search); })
   .observe($('#modal'), { attributes: true, attributeFilter: ['hidden'] });
 
+/* ---------------- temporary country block (admins are let through) ---------------- */
+const GEO_BLOCK = { countries: ['TH'], until: '2026-11-28T09:45:00Z' }; // ends by itself (UTC)
+async function geoBlocked(){
+  if (!GEO_BLOCK.until || Date.now() > Date.parse(GEO_BLOCK.until)) return false;
+  const test = new URLSearchParams(location.search).get('geo');
+  let cc = test;
+  if (!cc) try {
+    const ctl = new AbortController(); setTimeout(() => ctl.abort(), 4000);
+    const r = await fetch('https://get.geojs.io/v1/ip/country.json', { signal: ctl.signal, cache: 'no-store' });
+    cc = (await r.json()).country;
+  } catch { return false; } // if the lookup fails, let the visitor in
+  return GEO_BLOCK.countries.includes(String(cc || '').toUpperCase());
+}
+const showGeoBlock = () => { $('#app').innerHTML = `<div class="empty" style="padding:60px 20px"><h2 style="margin:0 0 8px">👑 ${esc(t('site'))}</h2><p>${esc(t('geo_block'))}</p></div>`; };
+
 /* ---------------- start ---------------- */
 try {
   api = DEMO ? makeDemoApi() : await makeSupabaseApi();
@@ -826,9 +841,10 @@ try {
   await loadAuth();
   renderUser();
   $('#app').innerHTML = `<div class="empty">${t('loading')}</div>`;
-  await loadMiss(); renderMiss(); route();
-  if (state.user && !state.profile) openProfile();
-  api.onAuth(async () => { await loadAuth(); renderUser(); await loadMiss(); renderMiss(); if (state.user && !state.profile) openProfile(); });
+  state.geo = await geoBlocked();
+  if (state.geo && !realAdmin()) showGeoBlock();
+  else { await loadMiss(); renderMiss(); route(); if (state.user && !state.profile) openProfile(); }
+  api.onAuth(async () => { await loadAuth(); renderUser(); if (state.geo && !realAdmin()) return showGeoBlock(); await loadMiss(); renderMiss(); if (state.user && !state.profile) openProfile(); });
 } catch(err){
   console.error(err);
   $('#app').innerHTML = `<div class="empty">${esc(t('load_fail', { e: errMsg(err) }))}</div>`;
